@@ -44,6 +44,7 @@
 #include "devicemanager.hpp"
 #include "devices/hardwaredevice.hpp"
 #include "dialogs/settings.hpp"
+#include "dialogs/triggermode.hpp"
 #include "globalsettings.hpp"
 #include "toolbars/mainbar.hpp"
 #include "util.hpp"
@@ -71,12 +72,23 @@ const QString MainWindow::WindowTitle = tr("PulseView");
 
 MainWindow::MainWindow(DeviceManager &device_manager, QWidget *parent) :
 	QMainWindow(parent),
+	repetitive_rearm_permitted_(false),
+	capture_mode_(DefaultCaptureMode),
+	repetitive_rearm_time_(DefaultRearmTime),
+	repetitive_rearm_timer_(),
 	device_manager_(device_manager),
 	session_selector_(this),
 	icon_red_(":/icons/status-red.svg"),
 	icon_green_(":/icons/status-green.svg"),
 	icon_grey_(":/icons/status-grey.svg")
 {
+	qRegisterMetaType<util::Timestamp>("util::Timestamp");
+	qRegisterMetaType<uint64_t>("uint64_t");
+
+	repetitive_rearm_timer_.stop();
+	repetitive_rearm_timer_.setSingleShot(true);
+	repetitive_rearm_timer_.setInterval(repetitive_rearm_time_);
+
 	setup_ui();
 	restore_ui_settings();
 }
@@ -86,6 +98,7 @@ MainWindow::~MainWindow()
 	// Make sure we no longer hold any shared pointers to widgets after the
 	// destructor finishes (goes for sessions and sub windows alike)
 
+	repetitive_rearm_timer_.stop();
 	while (!sessions_.empty())
 		remove_session(sessions_.front());
 
@@ -339,6 +352,8 @@ shared_ptr<Session> MainWindow::add_session()
 		this, SLOT(on_session_name_changed()));
 	connect(session.get(), SIGNAL(device_changed()),
 		this, SLOT(on_session_device_changed()));
+	connect(session.get(), SIGNAL(capture_failure()),
+		this, SLOT(on_session_capture_failure()));
 	connect(session.get(), SIGNAL(capture_state_changed(int)),
 		this, SLOT(on_session_capture_state_changed(int)));
 
@@ -522,6 +537,11 @@ void MainWindow::setup_ui()
 	run_stop_shortcut_ = new QShortcut(QKeySequence(Qt::Key_Space), run_stop_button_, SLOT(click()));
 	run_stop_shortcut_->setAutoRepeat(false);
 
+	triggermode_button_ = new QToolButton();
+	triggermode_button_->setIcon(QIcon(":/icons/repetitive.png"));
+	triggermode_button_->setToolTip(tr("Trigger Mode"));
+	triggermode_button_->setAutoRaise(true);
+
 	settings_button_ = new QToolButton();
 	settings_button_->setIcon(QIcon::fromTheme("preferences-system",
 		QIcon(":/icons/preferences-system.png")));
@@ -538,6 +558,7 @@ void MainWindow::setup_ui()
 	layout->addWidget(new_session_button_);
 	layout->addWidget(separator1);
 	layout->addWidget(run_stop_button_);
+	layout->addWidget(triggermode_button_);
 	layout->addWidget(separator2);
 	layout->addWidget(settings_button_);
 
@@ -556,6 +577,8 @@ void MainWindow::setup_ui()
 		this, SLOT(on_new_session_clicked()));
 	connect(run_stop_button_, SIGNAL(clicked(bool)),
 		this, SLOT(on_run_stop_clicked()));
+	connect(triggermode_button_, SIGNAL(clicked(bool)),
+		this, SLOT(on_triggermode_clicked()));
 	connect(settings_button_, SIGNAL(clicked(bool)),
 		this, SLOT(on_settings_clicked()));
 
@@ -568,6 +591,9 @@ void MainWindow::setup_ui()
 	connect(static_cast<QApplication *>(QCoreApplication::instance()),
 		SIGNAL(focusChanged(QWidget*, QWidget*)),
 		this, SLOT(on_focus_changed()));
+
+	connect(&repetitive_rearm_timer_, SIGNAL(timeout()),
+		this, SLOT(on_repetitive_rearm_timeout()));
 }
 
 void MainWindow::update_acq_button(Session *session)
@@ -691,14 +717,21 @@ void MainWindow::on_run_stop_clicked()
 					show_session_error("Capture failed", message); });
 	} else {
 
-		shared_ptr<Session> session = last_focused_session_;
+        repetitive_rearm_timer_.stop();
+        if (repetitive_rearm_permitted_) {
+            repetitive_rearm_permitted_ = false;
+            return;
+        }
+
+        shared_ptr<Session> session = last_focused_session_;
 
 		if (!session)
 			return;
 
 		switch (session->get_capture_state()) {
 		case Session::Stopped:
-			session->start_capture([&](QString message) {
+            repetitive_rearm_permitted_ = (capture_mode_ == Repetitive);
+            session->start_capture([&](QString message) {
 				show_session_error("Capture failed", message); });
 			break;
 		case Session::AwaitingTrigger:
@@ -765,6 +798,42 @@ void MainWindow::on_settings_clicked()
 	dlg.exec();
 }
 
+void MainWindow::on_triggermode_clicked()
+{
+	dialogs::TriggerMode dlg(this);
+	dlg.exec();
+}
+
+capture_mode MainWindow::get_capture_mode()
+{
+	return capture_mode_;
+}
+
+void MainWindow::set_capture_mode(capture_mode mode)
+{
+	capture_mode_ = mode;
+	if (capture_mode_ == Single) {
+		repetitive_rearm_permitted_ = false;
+		repetitive_rearm_timer_.stop();
+	}
+}
+
+int MainWindow::get_repetitive_rearm_time()
+{
+	return repetitive_rearm_time_;
+}
+
+void MainWindow::set_repetitive_rearm_time(int repetitive_rearm_time)
+{
+	repetitive_rearm_time_ = repetitive_rearm_time;
+}
+
+void MainWindow::on_session_capture_failure()
+{
+	repetitive_rearm_permitted_ = false;
+	repetitive_rearm_timer_.stop();
+}
+
 void MainWindow::on_session_name_changed()
 {
 	// Update the corresponding dock widget's name(s)
@@ -819,6 +888,30 @@ void MainWindow::on_session_capture_state_changed(int state)
 		return;
 
 	update_acq_button(session);
+	const QIcon *icons[] = {&icon_grey_, &icon_red_, &icon_green_};
+	run_stop_button_->setIcon(*icons[state]);
+	run_stop_button_->setText((state == pv::Session::Stopped) ?
+		tr("Run") : tr("Stop"));
+
+	// If we just stopped, and are in repetitive mode, start the rearm timer
+	if ((state == Session::Stopped)
+	&&  (capture_mode_ == Repetitive)
+	&&  (repetitive_rearm_permitted_)) {
+		repetitive_rearm_timer_.setInterval(repetitive_rearm_time_);
+		repetitive_rearm_timer_.start();
+	}	
+	else {	
+		repetitive_rearm_timer_.stop();
+	}
+}
+
+void MainWindow::on_repetitive_rearm_timeout()
+{
+	repetitive_rearm_timer_.stop();
+	shared_ptr<Session> session = last_focused_session_;
+	if (repetitive_rearm_permitted_  &&  (capture_mode_ == Repetitive))
+		session->start_capture([&](QString message) {
+			show_session_error("Capture failed", message); });
 }
 
 void MainWindow::on_new_view(Session *session, int view_type)
