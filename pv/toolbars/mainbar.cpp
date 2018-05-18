@@ -43,6 +43,7 @@
 #include <pv/dialogs/connect.hpp>
 #include <pv/dialogs/inputoutputoptions.hpp>
 #include <pv/dialogs/storeprogress.hpp>
+#include <pv/dialogs/triggermode.hpp>
 #include <pv/mainwindow.hpp>
 #include <pv/popups/channels.hpp>
 #include <pv/popups/deviceoptions.hpp>
@@ -101,6 +102,7 @@ MainBar::MainBar(Session &session, QWidget *parent, pv::views::trace::View *view
 	new_view_button_(new QToolButton()),
 	open_button_(new QToolButton()),
 	save_button_(new QToolButton()),
+	triggermode_button_(new QToolButton()),
 	device_selector_(parent, session.device_manager(), action_connect_),
 	configure_button_(this),
 	configure_button_action_(nullptr),
@@ -232,6 +234,14 @@ MainBar::MainBar(Session &session, QWidget *parent, pv::views::trace::View *view
 	connect(&device_selector_, SIGNAL(device_selected()),
 		this, SLOT(on_device_selected()));
 
+	// Setup the repeat trigger mode button
+	triggermode_button_ = new QToolButton();
+	triggermode_button_->setIcon(QIcon(":/icons/trigger-marker-rising.svg"));
+	triggermode_button_->setToolTip(tr("Trigger Mode"));
+	triggermode_button_->setAutoRaise(true);
+	connect(triggermode_button_, SIGNAL(clicked(bool)),
+			this, SLOT(on_triggermode_clicked()));
+
 	// Setup the decoder button
 #ifdef ENABLE_DECODE
 	add_decoder_button_->setIcon(QIcon(":/icons/add-decoder.svg"));
@@ -308,6 +318,40 @@ void MainBar::set_capture_state(pv::Session::capture_state state)
 	sample_count_.setEnabled(ui_enabled);
 	sample_rate_.setEnabled(ui_enabled);
 }
+
+/*
+ * TODO this was the code from MainWindow
+ * but the MainBar would handle it differently as in the above function
+void MainBar::on_session_capture_state_changed(int state)
+{
+	(void)state;
+
+	Session *session = qobject_cast<Session*>(QObject::sender());
+	assert(session);
+
+	// Ignore if caller is not the currently focused session
+	// unless there is only one session
+	if ((sessions_.size() > 1) && (session != last_focused_session_.get()))
+		return;
+
+	update_acq_button(session);
+	const QIcon *icons[] = {&icon_grey_, &icon_red_, &icon_green_};
+	run_stop_button_->setIcon(*icons[state]);
+	run_stop_button_->setText((state == pv::Session::Stopped) ?
+		tr("Run") : tr("Stop"));
+
+	// If we just stopped, and are in repetitive mode, start the rearm timer
+	if ((state == Session::Stopped)
+	&&  (capture_mode_ == Repetitive)
+	&&  (repetitive_rearm_permitted_)) {
+		repetitive_rearm_timer_.setInterval(repetitive_rearm_time_);
+		repetitive_rearm_timer_.start();
+	}
+	else {
+		repetitive_rearm_timer_.stop();
+	}
+}
+*/
 
 void MainBar::reset_device_selector()
 {
@@ -912,6 +956,12 @@ void MainBar::on_add_math_signal_clicked()
 	session_.add_generated_signal(signal);
 }
 
+void MainBar::on_triggermode_clicked()
+{
+	dialogs::TriggerMode dlg(this, session_);
+	dlg.exec();
+}
+
 void MainBar::add_toolbar_widgets()
 {
 	addWidget(new_view_button_);
@@ -925,6 +975,7 @@ void MainBar::add_toolbar_widgets()
 	addWidget(&device_selector_);
 	configure_button_action_ = addWidget(&configure_button_);
 	channels_button_action_ = addWidget(&channels_button_);
+	addWidget(triggermode_button_);
 	addWidget(&sample_count_);
 	addWidget(&sample_rate_);
 #ifdef ENABLE_DECODE

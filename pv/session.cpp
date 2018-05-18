@@ -118,6 +118,10 @@ namespace pv {
 shared_ptr<sigrok::Context> Session::sr_context;
 
 Session::Session(DeviceManager &device_manager, QString name) :
+	repetitive_rearm_permitted_(false),
+	capture_mode_(DefaultCaptureMode),
+	repetitive_rearm_time_(DefaultRearmTime),
+	repetitive_rearm_timer_(),
 	shutting_down_(false),
 	device_manager_(device_manager),
 	default_name_(name),
@@ -128,10 +132,22 @@ Session::Session(DeviceManager &device_manager, QString name) :
 {
 	// Use this name also for the QObject instance
 	setObjectName(name_);
+
+	qRegisterMetaType<util::Timestamp>("util::Timestamp");
+	qRegisterMetaType<uint64_t>("uint64_t");
+
+	repetitive_rearm_timer_.stop();
+	repetitive_rearm_timer_.setSingleShot(true);
+	repetitive_rearm_timer_.setInterval(repetitive_rearm_time_);
+
+	connect(&repetitive_rearm_timer_, SIGNAL(timeout()),
+		this, SLOT(on_repetitive_rearm_timeout()));
 }
 
 Session::~Session()
 {
+	repetitive_rearm_timer_.stop();
+
 	shutting_down_ = true;
 
 	// Stop and join to the thread
@@ -795,6 +811,7 @@ void Session::start_capture(function<void (const QString)> error_handler)
 {
 	if (!device_) {
 		error_handler(tr("No active device set, can't start acquisition."));
+		report_failure();
 		return;
 	}
 
@@ -808,6 +825,7 @@ void Session::start_capture(function<void (const QString)> error_handler)
 			[](shared_ptr<Channel> channel) {
 				return channel->enabled(); })) {
 			error_handler(tr("No channels enabled."));
+			report_failure();
 			return;
 		}
 	}
@@ -835,6 +853,19 @@ void Session::start_capture(function<void (const QString)> error_handler)
 
 void Session::stop_capture()
 {
+	repetitive_rearm_timer_.stop();
+	if (repetitive_rearm_permitted_) {
+		repetitive_rearm_permitted_ = false;
+		return;
+	}
+
+	// TODO ???
+	// How to distinguish between the session stopping at the end of capture
+	// vs stopping because of interruption (stop button clicked)?
+	// - When capture ended naturally, rearm is permitted
+	// - When interrupted, no rearm should be permitted
+	repetitive_rearm_permitted_ = (capture_mode_ == Repetitive);
+
 	if (get_capture_state() != Stopped)
 		device_->stop();
 
@@ -1063,6 +1094,12 @@ void Session::set_capture_state(capture_state state)
 	capture_state_changed(state);
 }
 
+void Session::report_failure()
+{
+	on_session_capture_failure();
+	capture_failure();
+}
+
 void Session::update_signals()
 {
 	if (!device_) {
@@ -1247,8 +1284,10 @@ void Session::sample_thread_proc(function<void (const QString)> error_handler)
 	pipeline_->set_state(Gst::STATE_NULL);
 
 #else
-	if (!device_)
+	if (!device_) {
+		report_failure();
 		return;
+	}
 
 	try {
 		cur_samplerate_ = device_->read_config<uint64_t>(ConfigKey::SAMPLERATE);
@@ -1272,6 +1311,7 @@ void Session::sample_thread_proc(function<void (const QString)> error_handler)
 		device_->start();
 	} catch (Error& e) {
 		error_handler(e.what());
+		report_failure();
 		return;
 	}
 
@@ -1282,6 +1322,7 @@ void Session::sample_thread_proc(function<void (const QString)> error_handler)
 		device_->run();
 	} catch (Error& e) {
 		error_handler(e.what());
+		report_failure();
 		set_capture_state(Stopped);
 		return;
 	} catch (QString& e) {
@@ -1293,8 +1334,10 @@ void Session::sample_thread_proc(function<void (const QString)> error_handler)
 	set_capture_state(Stopped);
 
 	// Confirm that SR_DF_END was received
-	if (cur_logic_segment_)
+	if (cur_logic_segment_) {
 		qDebug() << "WARNING: SR_DF_END was not received.";
+		report_failure();
+	}
 #endif
 
 	// Optimize memory usage
@@ -1722,5 +1765,44 @@ void Session::on_new_decoders_selected(vector<const srd_decoder*> decoders)
 		}
 }
 #endif
+
+void Session::on_repetitive_rearm_timeout()
+{
+	repetitive_rearm_timer_.stop();
+	if (repetitive_rearm_permitted_  &&  (capture_mode_ == Repetitive))
+		start_capture([&](QString message) {
+			// TODO Emulate noquote()
+			qDebug() << "Capture failed:" << message; });
+}
+
+capture_mode Session::get_capture_mode()
+{
+	return capture_mode_;
+}
+
+void Session::set_capture_mode(capture_mode mode)
+{
+	capture_mode_ = mode;
+	if (capture_mode_ == Single) {
+		repetitive_rearm_permitted_ = false;
+		repetitive_rearm_timer_.stop();
+	}
+}
+
+int Session::get_repetitive_rearm_time()
+{
+	return repetitive_rearm_time_;
+}
+
+void Session::set_repetitive_rearm_time(int repetitive_rearm_time)
+{
+	repetitive_rearm_time_ = repetitive_rearm_time;
+}
+
+void Session::on_session_capture_failure()
+{
+	repetitive_rearm_permitted_ = false;
+	repetitive_rearm_timer_.stop();
+}
 
 } // namespace pv

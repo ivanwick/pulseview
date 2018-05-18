@@ -85,6 +85,11 @@ using sigrok::Option;
 
 namespace pv {
 
+enum capture_mode {
+	Single,
+	Repetitive
+};
+
 class DeviceManager;
 
 namespace data {
@@ -212,10 +217,22 @@ public:
 
 	MetadataObjManager* metadata_obj_manager();
 
+	void on_setting_changed(const QString &key, const QVariant &value);
+
+	capture_mode get_capture_mode();
+	void set_capture_mode(capture_mode);
+	int get_repetitive_rearm_time();
+	void set_repetitive_rearm_time(int);
+
 private:
 	void set_capture_state(capture_state state);
 
 	void update_signals();
+
+	void report_failure();
+	// TODO used to be a signal back to MainWindow but it is being handled
+	// internally in the session now, but left as a callable function.
+	void on_session_capture_failure();
 
 	shared_ptr<data::SignalBase> signalbase_from_channel(
 		shared_ptr<sigrok::Channel> channel) const;
@@ -248,6 +265,14 @@ private:
 	void data_feed_in(shared_ptr<sigrok::Device> device,
 		shared_ptr<sigrok::Packet> packet);
 
+	capture_mode const DefaultCaptureMode = Single;
+	int const DefaultRearmTime = 5000; // mSec
+
+	bool repetitive_rearm_permitted_;
+	capture_mode capture_mode_;
+	int repetitive_rearm_time_; // in mSec
+	QTimer repetitive_rearm_timer_;
+
 Q_SIGNALS:
 	void capture_state_changed(int state);
 	void device_changed();
@@ -255,6 +280,8 @@ Q_SIGNALS:
 	void signals_changed();
 
 	void name_changed();
+
+	void capture_failure();
 
 	void trigger_event(int segment_id, util::Timestamp location);
 
@@ -267,6 +294,8 @@ Q_SIGNALS:
 
 public Q_SLOTS:
 	void on_data_saved();
+
+	void on_repetitive_rearm_timeout();
 
 #ifdef ENABLE_DECODE
 	void on_new_decoders_selected(vector<const srd_decoder*> decoders);
