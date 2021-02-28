@@ -813,7 +813,6 @@ void Session::start_capture(function<void (const QString)> error_handler)
 {
 	if (!device_) {
 		error_handler(tr("No active device set, can't start acquisition."));
-		report_failure();
 		return;
 	}
 
@@ -825,7 +824,6 @@ void Session::start_capture(function<void (const QString)> error_handler)
 			[](shared_ptr<Channel> channel) {
 				return channel->enabled(); })) {
 			error_handler(tr("No channels enabled."));
-			report_failure();
 			return;
 		}
 	}
@@ -1105,12 +1103,6 @@ void Session::set_capture_state(capture_state state)
 	capture_state_changed(state);
 }
 
-void Session::report_failure()
-{
-	repetitive_rearm_permitted_ = false;
-	repetitive_rearm_timer_.stop();
-}
-
 void Session::update_signals()
 {
 	if (!device_) {
@@ -1295,10 +1287,8 @@ void Session::sample_thread_proc(function<void (const QString)> error_handler)
 	pipeline_->set_state(Gst::STATE_NULL);
 
 #else
-	if (!device_) {
-		report_failure();
+	if (!device_)
 		return;
-	}
 
 	try {
 		cur_samplerate_ = device_->read_config<uint64_t>(ConfigKey::SAMPLERATE);
@@ -1322,7 +1312,6 @@ void Session::sample_thread_proc(function<void (const QString)> error_handler)
 		device_->start();
 	} catch (Error& e) {
 		error_handler(e.what());
-		report_failure();
 		return;
 	}
 
@@ -1333,7 +1322,6 @@ void Session::sample_thread_proc(function<void (const QString)> error_handler)
 		device_->run();
 	} catch (Error& e) {
 		error_handler(e.what());
-		report_failure();
 		set_capture_state(Stopped);
 		return;
 	} catch (QString& e) {
@@ -1349,10 +1337,8 @@ void Session::sample_thread_proc(function<void (const QString)> error_handler)
 	}
 
 	// Confirm that SR_DF_END was received
-	if (cur_logic_segment_) {
+	if (cur_logic_segment_)
 		qDebug() << "WARNING: SR_DF_END was not received.";
-		report_failure();
-	}
 #endif
 
 	// Optimize memory usage

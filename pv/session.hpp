@@ -231,8 +231,6 @@ private:
 
 	void update_signals();
 
-	void report_failure();
-
 	shared_ptr<data::SignalBase> signalbase_from_channel(
 		shared_ptr<sigrok::Channel> channel) const;
 
