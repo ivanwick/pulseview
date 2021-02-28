@@ -18,6 +18,7 @@
  */
 
 #include "triggermode.hpp"
+#include <pv/session.hpp>
 
 namespace pv {
 namespace dialogs {

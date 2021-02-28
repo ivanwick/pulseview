@@ -31,11 +31,10 @@
 #include <QVBoxLayout>
 #include <QGroupBox>
 
-#include <pv/session.hpp>
-
 using std::shared_ptr;
 
 namespace pv {
+class Session;
 namespace dialogs {
 
 class TriggerMode : public QDialog
