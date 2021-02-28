@@ -1096,8 +1096,8 @@ void Session::set_capture_state(capture_state state)
 
 void Session::report_failure()
 {
-	on_session_capture_failure();
-	capture_failure();
+	repetitive_rearm_permitted_ = false;
+	repetitive_rearm_timer_.stop();
 }
 
 void Session::update_signals()
@@ -1797,12 +1797,6 @@ int Session::get_repetitive_rearm_time()
 void Session::set_repetitive_rearm_time(int repetitive_rearm_time)
 {
 	repetitive_rearm_time_ = repetitive_rearm_time;
-}
-
-void Session::on_session_capture_failure()
-{
-	repetitive_rearm_permitted_ = false;
-	repetitive_rearm_timer_.stop();
 }
 
 } // namespace pv

@@ -217,8 +217,6 @@ public:
 
 	MetadataObjManager* metadata_obj_manager();
 
-	void on_setting_changed(const QString &key, const QVariant &value);
-
 	capture_mode get_capture_mode();
 	void set_capture_mode(capture_mode);
 	int get_repetitive_rearm_time();
@@ -230,9 +228,6 @@ private:
 	void update_signals();
 
 	void report_failure();
-	// TODO used to be a signal back to MainWindow but it is being handled
-	// internally in the session now, but left as a callable function.
-	void on_session_capture_failure();
 
 	shared_ptr<data::SignalBase> signalbase_from_channel(
 		shared_ptr<sigrok::Channel> channel) const;
@@ -280,8 +275,6 @@ Q_SIGNALS:
 	void signals_changed();
 
 	void name_changed();
-
-	void capture_failure();
 
 	void trigger_event(int segment_id, util::Timestamp location);
 
