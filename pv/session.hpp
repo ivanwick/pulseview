@@ -85,6 +85,9 @@ using sigrok::Option;
 
 namespace pv {
 
+// TODO rename to?
+// - repeat_mode
+// - rearm_mode
 enum capture_mode {
 	Single,
 	Repetitive
@@ -125,7 +128,8 @@ public:
 	enum capture_state {
 		Stopped,
 		AwaitingTrigger,
-		Running
+		Running,
+		AwaitingRearm,
 	};
 
 	static shared_ptr<sigrok::Context> sr_context;
@@ -284,11 +288,13 @@ Q_SIGNALS:
 	void data_received();
 
 	void add_view(ViewType type, Session *session);
+	void repetitive_rearm();
 
 public Q_SLOTS:
 	void on_data_saved();
 
 	void on_repetitive_rearm_timeout();
+	void on_repetitive_rearm();
 
 #ifdef ENABLE_DECODE
 	void on_new_decoders_selected(vector<const srd_decoder*> decoders);
