@@ -271,8 +271,8 @@ private:
 	capture_mode capture_mode_;
 	int repetitive_rearm_time_; // in mSec
 	QTimer repetitive_rearm_timer_;
-	bool repetitive_first_;
-	void capture_session(function<void (const QString)> error_handler);
+	void start_sampling_thread(function<void (const QString)> error_handler);
+	void stop_sampling_thread();
 
 Q_SIGNALS:
 	void capture_state_changed(int state);

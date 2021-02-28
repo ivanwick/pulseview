@@ -847,14 +847,12 @@ void Session::start_capture(function<void (const QString)> error_handler)
 		name_changed();
 	}
 
-	repetitive_first_ = true;
-
-	capture_session(error_handler);
+	start_sampling_thread(error_handler);
 }
 
-void Session::capture_session(function<void (const QString)> error_handler)
+void Session::start_sampling_thread(function<void (const QString)> error_handler)
 {
-	stop_capture();
+	stop_sampling_thread();
 	repetitive_rearm_permitted_ = true;
 
 	// Begin the session
@@ -866,6 +864,13 @@ void Session::stop_capture()
 	repetitive_rearm_timer_.stop();
 	repetitive_rearm_permitted_ = false;
 
+	stop_sampling_thread();
+
+	set_capture_state(Stopped);
+}
+
+void Session::stop_sampling_thread()
+{
 	// TODO add another case for AwaitingRearm state
 	if (get_capture_state() != Stopped)
 		device_->stop();
@@ -874,7 +879,6 @@ void Session::stop_capture()
 	if (sampling_thread_.joinable())
 		sampling_thread_.join();
 
-	set_capture_state(Stopped);
 }
 
 void Session::register_view(shared_ptr<views::ViewBase> view)
@@ -1304,18 +1308,15 @@ void Session::sample_thread_proc(function<void (const QString)> error_handler)
 
 	out_of_memory_ = false;
 
-	if (repetitive_first_) {
-		repetitive_first_ = false;
-		{
-			lock_guard<recursive_mutex> lock(data_mutex_);
-			cur_logic_segment_.reset();
-			cur_analog_segments_.clear();
-			for (shared_ptr<data::SignalBase> sb : signalbases_)
-				sb->clear_sample_data();
-		}
-		highest_segment_id_ = -1;
-		frame_began_ = false;
+	{
+		lock_guard<recursive_mutex> lock(data_mutex_);
+		cur_logic_segment_.reset();
+		cur_analog_segments_.clear();
+		for (shared_ptr<data::SignalBase> sb : signalbases_)
+			sb->clear_sample_data();
 	}
+	highest_segment_id_ = -1;
+	frame_began_ = false;
 
 	try {
 		device_->start();
@@ -1784,7 +1785,7 @@ void Session::on_repetitive_rearm_timeout()
 {
 	repetitive_rearm_timer_.stop();
 	if (capture_mode_ == Repetitive)
-		capture_session([&](QString message) {
+		start_sampling_thread([&](QString message) {
 			// TODO Emulate noquote()
 			qDebug() << "Capture failed:" << message; });
 }
