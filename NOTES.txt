@@ -2,6 +2,6 @@ TODO
 ====
 - Change Icon to double trigger and add repeat arrows
 - Figure out how the segments are supposed to work
-- Change the modal dialog box to a pop up ballon
-- Disable repeat-trigger button when capture is started
++ Change the modal dialog box to a pop up ballon
++ Disable repeat-trigger button when capture is started
 - Do we really need Session::report_failure()? It seems that was necessary before when it had to signal MainWindow but now it's all internal to the Session
